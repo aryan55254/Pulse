@@ -73,7 +73,15 @@ int main()
                   << buffer << std::endl;
 
         const char *http_response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello, client!\r\n";
-        send(client_socket, http_response, strlen(http_response), 0);
+        ssize_t bytes_sent = send(client_socket, http_response, strlen(http_response), 0);
+        if (bytes_sent < 0)
+        {
+            perror("send failed");
+        }
+        else if (bytes_sent < (ssize_t)strlen(http_response))
+        {
+            std::cerr << "Warning: partial send (" << bytes_sent << " of " << strlen(http_response) << " bytes)" << std::endl;
+        }
 
         std::cout << "Sent 'Hello'. Closing connection." << std::endl;
         close(client_socket);
