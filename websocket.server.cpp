@@ -75,7 +75,21 @@ int main()
         std::cout << "new connection from " << client_ip << std::endl;
 
         char buffer[BUFFER_size] = {0};
-        recv(client_socket, buffer, BUFFER_size, 0);
+        ssize_t bytes_received = recv(client_socket, buffer, BUFFER_size - 1, 0);
+        if (bytes_received < 0)
+        {
+            perror("recv failed");
+            close(client_socket);
+            continue;
+        }
+        else if (bytes_received == 0)
+        {
+            std::cout << "Client disconnected before sending data" << std::endl;
+            close(client_socket);
+            continue;
+        }
+        buffer[bytes_received] = '\0';  // Null-terminate the received data
+        std::cout << "Client sent:\n"
         std::cout << "Client sent:\n"
                   << buffer << std::endl;
 
