@@ -72,7 +72,7 @@ int main()
         std::cout << "Client sent:\n"
                   << buffer << std::endl;
 
-        const char *http_response = "HTTP/1.1 200OK\r\nContent-Type : text/plain\r\n\r\nHello , client!\r\n";
+        const char *http_response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello, client!\r\n";
         send(client_socket, http_response, strlen(http_response), 0);
 
         std::cout << "Sent 'Hello'. Closing connection." << std::endl;
