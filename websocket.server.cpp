@@ -5,7 +5,6 @@
 #include <sstream>
 #include <cstring>
 #include <cstdint>
-#include <cstdint>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
