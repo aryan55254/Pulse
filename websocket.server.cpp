@@ -109,14 +109,16 @@ void send_websocket_frame(int client_socket, const std::string &payload, uint8_t
         frame_header.insert(frame_header.end(), (uint8_t *)&len64, (uint8_t *)&len64 + 8);
     }
     ssize_t header_sent = send(client_socket, frame_header.data(), frame_header.size(), 0);
-    if (header_sent < 0) {
+    if (header_sent < 0)
+    {
         std::cerr << "Failed to send frame header" << std::endl;
         return;
     }
 
     // Send the payload (it's not masked)
     ssize_t payload_sent = send(client_socket, payload.c_str(), payload.length(), 0);
-    if (payload_sent < 0) {
+    if (payload_sent < 0)
+    {
         std::cerr << "Failed to send payload" << std::endl;
         return;
     }
@@ -141,6 +143,21 @@ void handle_websocket_connection(int client_socket)
         }
 
         const uint8_t *frame = (const uint8_t *)buffer;
+
+        bool fin = (frame[0] & 0x80) != 0;
+        bool rsv = (frame[0] & 0x70) != 0;
+
+        if (rsv)
+        {
+            std::cerr << "Error: RSV bits set without negotiated extension. Closing connection." << std::endl;
+            break;
+        }
+
+        if (!fin)
+        {
+            std::cerr << "Error: Fragmented frames not supported. Closing connection." << std::endl;
+            break;
+        }
 
         uint8_t opcode = frame[0] & 0x0F;
 
