@@ -90,7 +90,6 @@ int main()
         }
         buffer[bytes_received] = '\0';  // Null-terminate the received data
         std::cout << "Client sent:\n"
-        std::cout << "Client sent:\n"
                   << buffer << std::endl;
 
         const char *http_response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello, client!\r\n";
