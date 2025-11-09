@@ -10,8 +10,70 @@
 #include <netinet/in.h>
 #include <unistd.h>
 
+#include <openssl/sha.h>
+#include <openssl/bio.h>
+#include <openssl/evp.h>
+#include <openssl/buffer.h>
+
 #define PORT 8080
 #define BUFFER_size 4096
+
+// helper functions
+// encodes raw bytes into a base64 string
+std::string base64_encode(const unsigned char *input, int length)
+{
+    BIO *b64 = BIO_new(BIO_f_base64());
+    BIO *mem = BIO_new(BIO_s_mem());
+    b64 = BIO_push(b64, mem);
+
+    BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+    BIO_write(b64, input, length);
+    BIO_flush(b64);
+
+    BUF_MEM *mem_ptr;
+    BIO_get_mem_ptr(b64, &mem_ptr);
+    std::string encoded(mem_ptr->data, mem_ptr->length);
+
+    BIO_free_all(b64);
+    return encoded;
+}
+
+// add all key value pairs in a hashmap
+std::map<std::string, std::string> parse_http_request(char *buffer)
+{
+    std::map<std::string, std::string> headers;
+    std::istringstream request(buffer);
+    std::string line;
+
+    std::getline(request, line);
+
+    while (std::getline(request, line) && line != "\r")
+    {
+        std::size_t colon_pos = line.find(":");
+        if (colon_pos != std::string::npos)
+        {
+            std::string header_name = line.substr(0, colon_pos);
+            std::string header_value = line.substr(colon_pos + 2);
+            if (!header_value.empty() && header_value.back() == '\r')
+            {
+                header_value.pop_back();
+            }
+            headers[header_name] = header_value;
+        }
+    }
+    return headers;
+}
+
+// fucntion to add the parsed client key to the magic key and create the websocket protocol accepting key
+std::string generate_websocket_accept_key(const std::string &client_key)
+{
+    const std::string magic_string = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    std::string combined = client_key + magic_string;
+
+    unsigned char sha1_hash[SHA_DIGEST_LENGTH];
+    SHA1(reinterpret_cast<const unsigned char *>(combined.c_str()), combined.length(), sha1_hash);
+    return base64_encode(sha1_hash, SHA_DIGEST_LENGTH);
+}
 
 int main()
 {
@@ -88,23 +150,61 @@ int main()
             close(client_socket);
             continue;
         }
-        buffer[bytes_received] = '\0';  // Null-terminate the received data
-        std::cout << "Client sent:\n"
-                  << buffer << std::endl;
 
-        const char *http_response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello, client!\r\n";
-        ssize_t bytes_sent = send(client_socket, http_response, strlen(http_response), 0);
+        std::cout << "--- Client Handshake Request ---" << std::endl;
+        std::cout << buffer << std::endl;
+        std::cout << "--------------------------------" << std::endl;
+
+        // parse http requests
+
+        std::map<std::string, std::string> headers = parse_http_request(buffer);
+
+        // check for ws headers
+        if (headers.find("Upgrade") == headers.end() || headers["Upgrade"] != "websocket" || headers.find("Sec-WebSocket-Key") == headers.end())
+        {
+            std::cerr << "Invalid HTTP request (not a WebSocket upgrade)" << std::endl;
+            const char *http_response = "HTTP/1.1 400 Bad Request\r\n\r\n";
+            send(client_socket, http_response, strlen(http_response), 0);
+            close(client_socket);
+            continue;
+        }
+        std::string client_key = headers["Sec-WebSocket-Key"];
+        std::string accept_key = generate_websocket_accept_key(client_key);
+        std::string response =
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Accept: " +
+            accept_key + "\r\n"
+                         "\r\n";
+
+        std::cout << "--- Server Handshake Response ---" << std::endl;
+        std::cout << response << std::endl;
+        std::cout << "---------------------------------" << std::endl;
+
+        ssize_t bytes_sent = send(client_socket, response.c_str(), response.length(), 0);
         if (bytes_sent < 0)
         {
-            perror("send failed");
+            perror("Handshake send failed");
+            close(client_socket);
+            continue;
         }
-        else if (bytes_sent < (ssize_t)strlen(http_response))
-        {
-            std::cerr << "Warning: partial send (" << bytes_sent << " of " << strlen(http_response) << " bytes)" << std::endl;
-        }
+        std::cout << "Handshake successful. WebSocket connection established." << std::endl;
+        std::cout << "Waiting for WebSocket frames..." << std::endl;
 
-        std::cout << "Sent 'Hello'. Closing connection." << std::endl;
+        while (true)
+        {
+            char frame_buffer[BUFFER_size] = {0};
+            bytes_received = recv(client_socket, frame_buffer, BUFFER_size - 1, 0);
+            if (bytes_received <= 0)
+            {
+                std::cout << "Client disconnected." << std::endl;
+                break; // Exit this inner loop
+            }
+            std::cout << "Received " << bytes_received << " bytes of raw frame data." << std::endl;
+        }
         close(client_socket);
+        std::cout << "Connection closed." << std::endl;
     }
     close(server_fd);
     return 0;
