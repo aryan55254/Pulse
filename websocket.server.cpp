@@ -9,7 +9,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
-
+#include <algorithm>
+#include <cctype>
 #include <openssl/sha.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
@@ -53,7 +54,13 @@ std::map<std::string, std::string> parse_http_request(char *buffer)
         if (colon_pos != std::string::npos)
         {
             std::string header_name = line.substr(0, colon_pos);
-            std::string header_value = line.substr(colon_pos + 2);
+            std::transform(header_name.begin(), header_name.end(), header_name.begin(), ::tolower);
+            std::size_t value_start = colon_pos + 1;
+            while (value_start < line.length() && (line[value_start] == ' ' || line[value_start] == '\t'))
+            {
+                value_start++;
+            }
+            std::string header_value = line.substr(value_start);
             if (!header_value.empty() && header_value.back() == '\r')
             {
                 header_value.pop_back();
@@ -64,7 +71,7 @@ std::map<std::string, std::string> parse_http_request(char *buffer)
     return headers;
 }
 
-// fucntion to add the parsed client key to the magic key and create the websocket protocol accepting key
+// function to add the parsed client key to the magic key and create the websocket protocol accepting key
 std::string generate_websocket_accept_key(const std::string &client_key)
 {
     const std::string magic_string = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
