@@ -1,3 +1,4 @@
+#!/bin/bash
 echo "Compiling websocket_server.cpp..."
 
 # -o server: Specifies the output executable name

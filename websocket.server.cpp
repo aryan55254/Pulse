@@ -160,7 +160,8 @@ int main()
         std::map<std::string, std::string> headers = parse_http_request(buffer);
 
         // check for ws headers
-        if (headers.find("Upgrade") == headers.end() || headers["Upgrade"] != "websocket" || headers.find("Sec-WebSocket-Key") == headers.end())
+        if (headers.find("Upgrade") == headers.end() || headers["Upgrade"] != "websocket" || headers.find("Sec-WebSocket-Key") == headers.end() ||
+            headers.find("Sec-WebSocket-Version") == headers.end() || headers["Sec-WebSocket-Version"] != "13")
         {
             std::cerr << "Invalid HTTP request (not a WebSocket upgrade)" << std::endl;
             const char *http_response = "HTTP/1.1 400 Bad Request\r\n\r\n";
