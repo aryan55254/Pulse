@@ -108,10 +108,18 @@ void send_websocket_frame(int client_socket, const std::string &payload, uint8_t
         uint64_t len64 = htobe64(static_cast<uint64_t>(len));
         frame_header.insert(frame_header.end(), (uint8_t *)&len64, (uint8_t *)&len64 + 8);
     }
-    send(client_socket, frame_header.data(), frame_header.size(), 0);
+    ssize_t header_sent = send(client_socket, frame_header.data(), frame_header.size(), 0);
+    if (header_sent < 0) {
+        std::cerr << "Failed to send frame header" << std::endl;
+        return;
+    }
 
     // Send the payload (it's not masked)
-    send(client_socket, payload.c_str(), payload.length(), 0);
+    ssize_t payload_sent = send(client_socket, payload.c_str(), payload.length(), 0);
+    if (payload_sent < 0) {
+        std::cerr << "Failed to send payload" << std::endl;
+        return;
+    }
 
     std::cout << "ECHOED: " << payload << std::endl;
 }
