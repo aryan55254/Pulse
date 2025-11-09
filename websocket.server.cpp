@@ -9,12 +9,14 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
-#include <algorithm>
-#include <cctype>
+
 #include <openssl/sha.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/buffer.h>
+
+#include <algorithm>
+#include <cctype>
 
 #define PORT 8080
 #define BUFFER_size 4096
@@ -80,6 +82,155 @@ std::string generate_websocket_accept_key(const std::string &client_key)
     unsigned char sha1_hash[SHA_DIGEST_LENGTH];
     SHA1(reinterpret_cast<const unsigned char *>(combined.c_str()), combined.length(), sha1_hash);
     return base64_encode(sha1_hash, SHA_DIGEST_LENGTH);
+}
+
+void send_websocket_frame(int client_socket, const std::string &payload, uint8_t opcode = 0x1) // opcode 0x1 meaans we wanna send text frame type of messages
+{
+    std::vector<uint8_t> frame_header;
+    frame_header.push_back(0x80 | opcode);
+
+    size_t len = payload.length();
+    if (len <= 125)
+    { // byte 2
+        // mask bit in this is 0 as frames from server to client aren't masked
+        frame_header.push_back(static_cast<uint8_t>(len));
+    }
+    else if (len <= 65535)
+    {
+        // medium size messages tells that lenght isnt 126 the real is in next 2 bytes
+        frame_header.push_back(126);
+        uint16_t len16 = htons(static_cast<uint16_t>(len));
+        frame_header.insert(frame_header.end(), (uint8_t *)&len16, (uint8_t *)&len16 + 2);
+    }
+    else
+    { // tells real lenght is in next 8 bytes
+        frame_header.push_back(127);
+        uint64_t len64 = htobe64(static_cast<uint64_t>(len));
+        frame_header.insert(frame_header.end(), (uint8_t *)&len64, (uint8_t *)&len64 + 8);
+    }
+    ssize_t header_sent = send(client_socket, frame_header.data(), frame_header.size(), 0);
+    if (header_sent < 0)
+    {
+        std::cerr << "Failed to send frame header" << std::endl;
+        return;
+    }
+
+    // Send the payload (it's not masked)
+    ssize_t payload_sent = send(client_socket, payload.c_str(), payload.length(), 0);
+    if (payload_sent < 0)
+    {
+        std::cerr << "Failed to send payload" << std::endl;
+        return;
+    }
+
+    std::cout << "ECHOED: " << payload << std::endl;
+}
+
+void handle_websocket_connection(int client_socket)
+{
+    char buffer[BUFFER_size];
+
+    while (true)
+    {
+        memset(buffer, 0, BUFFER_size);
+
+        ssize_t bytes_received = recv(client_socket, buffer, BUFFER_size, 0);
+
+        if (bytes_received <= 0)
+        {
+            std::cout << "Client disconnected." << std::endl;
+            break;
+        }
+
+        const uint8_t *frame = (const uint8_t *)buffer;
+
+        bool fin = (frame[0] & 0x80) != 0;
+        bool rsv = (frame[0] & 0x70) != 0;
+
+        if (rsv)
+        {
+            std::cerr << "Error: RSV bits set without negotiated extension. Closing connection." << std::endl;
+            break;
+        }
+
+        if (!fin)
+        {
+            std::cerr << "Error: Fragmented frames not supported. Closing connection." << std::endl;
+            break;
+        }
+
+        uint8_t opcode = frame[0] & 0x0F;
+
+        // Byte 2: MASK bit and Payload Len
+        bool is_masked = (frame[1] & 0x80) != 0;
+        uint64_t payload_len = frame[1] & 0x7F;
+
+        // Check for required masking
+        if (!is_masked)
+        {
+            std::cerr << "Error: Client frame not masked. Closing connection." << std::endl;
+            break;
+        }
+
+        size_t header_offset = 2;
+
+        // Handle extended payload lengths
+        if (payload_len == 126)
+        {
+            uint16_t len16;
+            memcpy(&len16, &frame[header_offset], 2);
+            payload_len = ntohs(len16);
+            header_offset += 2;
+        }
+        else if (payload_len == 127)
+        {
+            uint64_t len64;
+            memcpy(&len64, &frame[header_offset], 8);
+            payload_len = be64toh(len64);
+            header_offset += 8;
+        }
+
+        uint8_t masking_key[4];
+        memcpy(masking_key, &frame[header_offset], 4);
+        header_offset += 4;
+
+        std::vector<char> unmasked_payload;
+        unmasked_payload.resize(payload_len);
+
+        const uint8_t *masked_payload = &frame[header_offset];
+
+        for (size_t i = 0; i < payload_len; ++i)
+        {
+            unmasked_payload[i] = masked_payload[i] ^ masking_key[i % 4];
+        }
+        std::string payload_text(unmasked_payload.begin(), unmasked_payload.end());
+
+        switch (opcode)
+        {
+        case 0x1:
+            std::cout << "RECEIVED: " << payload_text << std::endl;
+            send_websocket_frame(client_socket, payload_text, 0x1);
+            break;
+
+        case 0x8:
+            std::cout << "RECEIVED: Client Close Frame" << std::endl;
+            send_websocket_frame(client_socket, "", 0x8);
+            goto connection_close;
+
+        case 0x9:
+            std::cout << "RECEIVED: Ping Frame" << std::endl;
+            send_websocket_frame(client_socket, payload_text, 0xA);
+            break;
+
+        default:
+            std::cout << "RECEIVED: Unhandled Opcode " << (int)opcode << std::endl;
+            break;
+        }
+    }
+
+connection_close:
+    close(client_socket);
+    std::cout << "Connection closed." << std::endl;
 }
 
 int main()
@@ -167,8 +318,8 @@ int main()
         std::map<std::string, std::string> headers = parse_http_request(buffer);
 
         // check for ws headers
-        if (headers.find("Upgrade") == headers.end() || headers["Upgrade"] != "websocket" || headers.find("Sec-WebSocket-Key") == headers.end() ||
-            headers.find("Sec-WebSocket-Version") == headers.end() || headers["Sec-WebSocket-Version"] != "13")
+        if (headers.find("upgrade") == headers.end() || headers["upgrade"] != "websocket" || headers.find("sec-websocket-key") == headers.end() ||
+            headers.find("sec-websocket-version") == headers.end() || headers["sec-websocket-version"] != "13" || headers.find("connection") == headers.end() || headers["connection"].find("Upgrade") == std::string::npos)
         {
             std::cerr << "Invalid HTTP request (not a WebSocket upgrade)" << std::endl;
             const char *http_response = "HTTP/1.1 400 Bad Request\r\n\r\n";
@@ -176,7 +327,7 @@ int main()
             close(client_socket);
             continue;
         }
-        std::string client_key = headers["Sec-WebSocket-Key"];
+        std::string client_key = headers["sec-websocket-key"];
         std::string accept_key = generate_websocket_accept_key(client_key);
         std::string response =
             "HTTP/1.1 101 Switching Protocols\r\n"
@@ -198,21 +349,8 @@ int main()
             continue;
         }
         std::cout << "Handshake successful. WebSocket connection established." << std::endl;
-        std::cout << "Waiting for WebSocket frames..." << std::endl;
 
-        while (true)
-        {
-            char frame_buffer[BUFFER_size] = {0};
-            bytes_received = recv(client_socket, frame_buffer, BUFFER_size - 1, 0);
-            if (bytes_received <= 0)
-            {
-                std::cout << "Client disconnected." << std::endl;
-                break; // Exit this inner loop
-            }
-            std::cout << "Received " << bytes_received << " bytes of raw frame data." << std::endl;
-        }
-        close(client_socket);
-        std::cout << "Connection closed." << std::endl;
+        handle_websocket_connection(client_socket);
     }
     close(server_fd);
     return 0;
