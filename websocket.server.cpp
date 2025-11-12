@@ -141,6 +141,11 @@ void handle_websocket_connection(int client_socket)
             std::cout << "Client disconnected." << std::endl;
             break;
         }
+        if (bytes_received < 2)
+        {
+            std::cerr << "Error: Incomplete frame header" << std::endl;
+            break;
+        }
 
         const uint8_t *frame = (const uint8_t *)buffer;
 
@@ -177,6 +182,11 @@ void handle_websocket_connection(int client_socket)
         // Handle extended payload lengths
         if (payload_len == 126)
         {
+            if (bytes_received < header_offset + 2)
+            {
+                std::cerr << "Incomplete frame" << std::endl;
+                break;
+            }
             uint16_t len16;
             memcpy(&len16, &frame[header_offset], 2);
             payload_len = ntohs(len16);
@@ -184,15 +194,31 @@ void handle_websocket_connection(int client_socket)
         }
         else if (payload_len == 127)
         {
+            if (bytes_received < header_offset + 8)
+            {
+                std::cerr << "Incomplete frame" << std::endl;
+                break;
+            }
             uint64_t len64;
             memcpy(&len64, &frame[header_offset], 8);
             payload_len = be64toh(len64);
             header_offset += 8;
         }
 
+        if (bytes_received < header_offset + 4)
+        {
+            std::cerr << "Incomplete frame (missing masking key)" << std::endl;
+            break;
+        }
         uint8_t masking_key[4];
         memcpy(masking_key, &frame[header_offset], 4);
         header_offset += 4;
+
+        if ((size_t)bytes_received < header_offset + payload_len)
+        {
+            std::cerr << "Incomplete frame (missing payload data)" << std::endl;
+            break;
+        }
 
         std::vector<char> unmasked_payload;
         unmasked_payload.resize(payload_len);
@@ -244,7 +270,7 @@ int main()
     int client_addrlen = sizeof(client_addr);
 
     // asking os to create a socket with tcp connection
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0)
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
         perror("socket failed");
         exit(EXIT_FAILURE);
@@ -319,7 +345,7 @@ int main()
 
         // check for ws headers
         if (headers.find("upgrade") == headers.end() || headers["upgrade"] != "websocket" || headers.find("sec-websocket-key") == headers.end() ||
-            headers.find("sec-websocket-version") == headers.end() || headers["sec-websocket-version"] != "13" || headers.find("connection") == headers.end() || headers["connection"].find("Upgrade") == std::string::npos)
+            headers.find("sec-websocket-version") == headers.end() || headers["sec-websocket-version"] != "13" || headers.find("connection") == headers.end() || headers["connection"].find("upgrade") == std::string::npos)
         {
             std::cerr << "Invalid HTTP request (not a WebSocket upgrade)" << std::endl;
             const char *http_response = "HTTP/1.1 400 Bad Request\r\n\r\n";
