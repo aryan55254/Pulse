@@ -372,10 +372,21 @@ int main()
         // parse http requests
 
         std::map<std::string, std::string> headers = parse_http_request(buffer);
+        std::string connection_val = headers["connection"];
+        std::string upgrade_val = headers["upgrade"];
 
-        // check for ws headers
-        if (headers.find("upgrade") == headers.end() || headers["upgrade"] != "websocket" || headers.find("sec-websocket-key") == headers.end() ||
-            headers.find("sec-websocket-version") == headers.end() || headers["sec-websocket-version"] != "13" || headers.find("connection") == headers.end() || headers["connection"].find("upgrade") == std::string::npos)
+        // Normalize headers to lowercase
+        std::transform(connection_val.begin(), connection_val.end(), connection_val.begin(), ::tolower);
+        std::transform(upgrade_val.begin(), upgrade_val.end(), upgrade_val.begin(), ::tolower);
+
+        // The Validation Check
+        if (headers.find("upgrade") == headers.end() ||
+            upgrade_val != "websocket" || // Check the lowercased version
+            headers.find("sec-websocket-key") == headers.end() ||
+            headers.find("sec-websocket-version") == headers.end() ||
+            headers["sec-websocket-version"] != "13" ||
+            headers.find("connection") == headers.end() ||
+            connection_val.find("upgrade") == std::string::npos) // Check the lowercased version
         {
             std::cerr << "Invalid HTTP request (not a WebSocket upgrade)" << std::endl;
             const char *http_response = "HTTP/1.1 400 Bad Request\r\n\r\n";
