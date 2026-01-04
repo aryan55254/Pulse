@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <cctype>
 
+#include <netinet/tcp.h>
+
 #define PORT 8080
 #define BUFFER_size 4096
 #define MAX_PAYLOAD_SIZE 10485760
@@ -344,6 +346,11 @@ int main()
         {
             perror("accept");
             continue;
+        }
+        int flag = 1;
+        if (setsockopt(client_socket, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int)) < 0)
+        {
+            perror("setsockopt TCP_NODELAY");
         }
         // basically storing the ip of client in human readable format;
         char client_ip[INET_ADDRSTRLEN];

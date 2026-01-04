@@ -17,7 +17,7 @@ A complete WebSocket echo server built from scratch in C++ using low-level POSIX
 
 ### Latency Test
 
-~ Tested for latency : 41.1ms
+~ Tested for latency : 0.4ms
 
 ![DEMO PIC](images/latency.png)
 
